@@ -23,7 +23,7 @@ weight: 200
 
 Use Terraform’s Grafana Provider to manage your alerting resources and provision them into your Grafana system. Terraform provider support for Grafana Alerting makes it easy to create, manage, and maintain your entire Grafana Alerting stack as code.
 
-This guide outlines the steps and references to provision alerting resources with Terraform. For a practical demo, you can clone this [example using Grafana OSS and Docker Compose](https://github.com/grafana/provisioning-alerting-examples/tree/main/terraform).
+This guide outlines the steps and references to provision alerting resources with Terraform. For a practical demo, you can clone and try this [example using Grafana OSS and Docker Compose](https://github.com/grafana/provisioning-alerting-examples/tree/main/terraform).
 
 To create and manage your alerting resources using Terraform, you have to complete the following tasks.
 
@@ -31,7 +31,7 @@ To create and manage your alerting resources using Terraform, you have to comple
 1. Create your alerting resources in Terraform format by
    - [exporting configured alerting resources][alerting_export]
    - or writing the [Terraform Alerting schemas](https://registry.terraform.io/providers/grafana/grafana/latest/docs).
-     > By default, you cannot edit provisioned resources. Enable [`disable_provenance` in the Terraform resource](#edit-provisioned-resources-in-the-grafana-ui) to permit their modifications in the Grafana UI.
+     > By default, you cannot edit provisioned resources. Enable [`disable_provenance` in the Terraform resource](#edit-provisioned-resources-in-the-grafana-ui) to allow changes in the Grafana UI.
 1. Run `terraform apply` to provision your alerting resources.
 
 Before you begin, you should have available a Grafana instance and [Terraform installed](https://www.terraform.io/downloads) on your machine.
@@ -74,178 +74,17 @@ For Grafana Cloud, refer to the [instructions to manage a Grafana Cloud stack wi
 
 ## Create Terraform configurations for alerting resources
 
-### Import contact points and templates
+With the [Grafana Terraform provider](https://registry.terraform.io/providers/grafana/grafana/latest/docs), you can manage the following alerting resources.
 
-Contact points connect an alerting stack to the outside world. They tell Grafana how to connect to your external systems and where to deliver notifications.
+| Alerting resource                               | Terraform resource                                                                                                               |
+| ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| [Alert rules][alerting-rules]                   | [grafana_rule_group](https://registry.terraform.io/providers/grafana/grafana/latest/docs/resources/rule_group)                   |
+| [Contact points][contact-points]                | [grafana_contact_point](https://registry.terraform.io/providers/grafana/grafana/latest/docs/resources/contact_point)             |
+| [Notification templates][notification-template] | [grafana_message_template](https://registry.terraform.io/providers/grafana/grafana/latest/docs/resources/message_template)       |
+| [Notification policy tree][notification-policy] | [grafana_notification_policy](https://registry.terraform.io/providers/grafana/grafana/latest/docs/resources/notification_policy) |
+| [Mute timings][mute-timings]                    | [grafana_mute_timing](https://registry.terraform.io/providers/grafana/grafana/latest/docs/resources/mute_timing)                 |
 
-To provision contact points and templates, refer to the [grafana_contact_point schema](https://registry.terraform.io/providers/grafana/grafana/latest/docs/resources/contact_point) and [grafana_message_template schema](https://registry.terraform.io/providers/grafana/grafana/latest/docs/resources/message_template), and complete the following steps.
-
-1. Copy this code block into a `.tf` file on your local machine.
-
-   This example creates a contact point that sends alert notifications to Slack.
-
-   ```HCL
-   resource "grafana_contact_point" "my_slack_contact_point" {
-       name = "Send to My Slack Channel"
-
-       slack {
-           url = <YOUR_SLACK_WEBHOOK_URL>
-           text = <<EOT
-   {{ len .Alerts.Firing }} alerts are firing!
-
-   Alert summaries:
-   {{ range .Alerts.Firing }}
-   {{ template "Alert Instance Template" . }}
-   {{ end }}
-   EOT
-       }
-   }
-   ```
-
-   You can create multiple external integrations in a single contact point. Notifications routed to this contact point will be sent to all integrations. This example shows multiple integrations in the same Terraform resource.
-
-   ```
-   resource "grafana_contact_point" "my_multi_contact_point" {
-       name = "Send to Many Places"
-
-       slack {
-           url = "webhook1"
-           ...
-       }
-       slack {
-           url = "webhook2"
-           ...
-       }
-       teams {
-           ...
-       }
-       email {
-           ...
-       }
-   }
-   ```
-
-1. Enter text for your notification in the text field.
-
-   The `text` field supports [Go-style templating](https://pkg.go.dev/text/template). This enables you to manage your Grafana Alerting notification templates directly in Terraform.
-
-1. Run the command `terraform apply`.
-
-1. Go to the Grafana UI and check the details of your contact point.
-
-1. Click **Test** to verify that the contact point works correctly.
-
-### Reuse templates
-
-You can reuse the same templates across many contact points. In the example above, a shared template ie embedded using the statement `{{ template “Alert Instance Template” . }}`
-
-This fragment can then be managed separately in Terraform:
-
-```HCL
-resource "grafana_message_template" "my_alert_template" {
-    name = "Alert Instance Template"
-
-    template = <<EOT
-{{ define "Alert Instance Template" }}
-Firing: {{ .Labels.alertname }}
-Silence: {{ .SilenceURL }}
-{{ end }}
-EOT
-}
-```
-
-### Import notification policies and routing
-
-Notification policies tell Grafana how to route alert instances to your contact points. They connect firing alerts to your previously defined contact points using a system of labels and matchers.
-
-To provision notification policies and routing, refer to the [grafana_notification_policy schema](https://registry.terraform.io/providers/grafana/grafana/latest/docs/resources/notification_policy), and complete the following steps.
-
-{{% admonition type="warning" %}}
-
-Since the policy tree is a single resource, provisioning the `grafana_notification_policy` resource will overwrite a policy tree created through any other means.
-
-{{< /admonition >}}
-
-1. Copy this code block into a `.tf` file on your local machine.
-
-   In this example, the alerts are grouped by `alertname`, which means that any notifications coming from alerts which share the same name, are grouped into the same Slack message. You can provide any set of label keys here, or you can use the special label `"..."` to route by all label keys, sending each alert in a separate notification.
-
-   If you want to route specific notifications differently, you can add sub-policies. Sub-policies allow you to apply routing to different alerts based on label matching. In this example, we apply a mute timing to all alerts with the label a=b.
-
-   ```HCL
-   resource "grafana_notification_policy" "my_policy" {
-       group_by = ["alertname"]
-       contact_point = grafana_contact_point.my_slack_contact_point.name
-
-       group_wait = "45s"
-       group_interval = "6m"
-       repeat_interval = "3h"
-
-       policy {
-           matcher {
-               label = "a"
-               match = "="
-               value = "b"
-           }
-           group_by = ["..."]
-           contact_point = grafana_contact_point.a_different_contact_point.name
-           mute_timings = [grafana_mute_timing.my_mute_timing.name]
-
-           policy {
-               matcher {
-                   label = "sublabel"
-                   match = "="
-                   value = "subvalue"
-               }
-               contact_point = grafana_contact_point.a_third_contact_point.name
-               group_by = ["..."]
-           }
-       }
-   }
-   ```
-
-1. In the mute_timings field, link a mute timing to your notification policy.
-
-1. Run the command `terraform apply`.
-
-1. Go to the Grafana UI and check the details of your notification policy.
-
-1. Click **Test** to verify that the notification point is working correctly.
-
-### Import mute timings
-
-Mute timings provide the ability to mute alert notifications for defined time periods.
-
-To provision mute timings, refer to the [grafana_mute_timing schema](https://registry.terraform.io/providers/grafana/grafana/latest/docs/resources/mute_timing), and complete the following steps.
-
-1. Copy this code block into a `.tf` file on your local machine.
-
-   In this example, alert notifications are muted on weekends.
-
-   ```HCL
-   resource "grafana_mute_timing" "my_mute_timing" {
-       name = "My Mute Timing"
-
-       intervals {
-           times {
-           start = "04:56"
-           end = "14:17"
-           }
-           weekdays = ["saturday", "sunday", "tuesday:thursday"]
-           months = ["january:march", "12"]
-           years = ["2025:2027"]
-       }
-   }
-   ```
-
-1. Run the command `terraform apply`.
-1. Go to the Grafana UI and check the details of your mute timing.
-1. Reference your newly created mute timing in a notification policy using the `mute_timings` field.
-   This will apply your mute timing to some or all of your notifications.
-
-1. Click **Test** to verify that the mute timing is working correctly.
-
-### Import alert rules
+### Add alert rules
 
 [Alert rules][alerting-rules] enable you to alert against any Grafana data source. This can be a data source that you already have configured, or you can [define your data sources in Terraform](https://registry.terraform.io/providers/grafana/grafana/latest/docs/resources/data_source) alongside your alert rules.
 
@@ -348,26 +187,204 @@ When the alert fires, Grafana routes a notification through the policy you defin
 
 For example, if you chose Slack as a contact point, Grafana’s embedded [Alertmanager](https://github.com/prometheus/alertmanager) automatically posts a message to Slack.
 
-### Edit provisioned resources in the Grafana UI
+### Add contact points
 
-By default, you cannot edit resources provisioned via Terraform in Grafana. This ensures that your alerting stack always stays in sync with your Terraform code. To enable editing these resources in the Grafana UI, enable the `disable_provenance` attribute on alerting resources:
+Contact points connect an alerting stack to the outside world. They tell Grafana how to connect to your external systems and where to deliver notifications.
+
+To provision contact points and templates, refer to the [grafana_contact_point schema](https://registry.terraform.io/providers/grafana/grafana/latest/docs/resources/contact_point) and [grafana_message_template schema](https://registry.terraform.io/providers/grafana/grafana/latest/docs/resources/message_template), and complete the following steps.
+
+1. Copy this code block into a `.tf` file on your local machine.
+
+   This example creates a contact point that sends alert notifications to Slack.
+
+   ```HCL
+   resource "grafana_contact_point" "my_slack_contact_point" {
+       name = "Send to My Slack Channel"
+
+       slack {
+           url = <YOUR_SLACK_WEBHOOK_URL>
+           text = <<EOT
+   {{ len .Alerts.Firing }} alerts are firing!
+
+   Alert summaries:
+   {{ range .Alerts.Firing }}
+   {{ template "Alert Instance Template" . }}
+   {{ end }}
+   EOT
+       }
+   }
+   ```
+
+   You can create multiple external integrations in a single contact point. Notifications routed to this contact point will be sent to all integrations. This example shows multiple integrations in the same Terraform resource.
+
+   ```
+   resource "grafana_contact_point" "my_multi_contact_point" {
+       name = "Send to Many Places"
+
+       slack {
+           url = "webhook1"
+           ...
+       }
+       slack {
+           url = "webhook2"
+           ...
+       }
+       teams {
+           ...
+       }
+       email {
+           ...
+       }
+   }
+   ```
+
+1. Enter text for your notification in the text field.
+
+   The `text` field supports [Go-style templating](https://pkg.go.dev/text/template). This enables you to manage your Grafana Alerting notification templates directly in Terraform.
+
+1. Run the command `terraform apply`.
+
+1. Go to the Grafana UI and check the details of your contact point.
+
+1. Click **Test** to verify that the contact point works correctly.
+
+### Add the notification policiy tree
+
+Notification policies tell Grafana how to route alert instances to your contact points. They connect firing alerts to your previously defined contact points using a system of labels and matchers.
+
+To provision notification policies and routing, refer to the [grafana_notification_policy schema](https://registry.terraform.io/providers/grafana/grafana/latest/docs/resources/notification_policy), and complete the following steps.
+
+{{% admonition type="warning" %}}
+
+Since the policy tree is a single resource, provisioning the `grafana_notification_policy` resource will overwrite a policy tree created through any other means.
+
+{{< /admonition >}}
+
+1. Copy this code block into a `.tf` file on your local machine.
+
+   In this example, the alerts are grouped by `alertname`, which means that any notifications coming from alerts which share the same name, are grouped into the same Slack message. You can provide any set of label keys here, or you can use the special label `"..."` to route by all label keys, sending each alert in a separate notification.
+
+   If you want to route specific notifications differently, you can add sub-policies. Sub-policies allow you to apply routing to different alerts based on label matching. In this example, we apply a mute timing to all alerts with the label a=b.
+
+   ```HCL
+   resource "grafana_notification_policy" "my_policy" {
+       group_by = ["alertname"]
+       contact_point = grafana_contact_point.my_slack_contact_point.name
+
+       group_wait = "45s"
+       group_interval = "6m"
+       repeat_interval = "3h"
+
+       policy {
+           matcher {
+               label = "a"
+               match = "="
+               value = "b"
+           }
+           group_by = ["..."]
+           contact_point = grafana_contact_point.a_different_contact_point.name
+           mute_timings = [grafana_mute_timing.my_mute_timing.name]
+
+           policy {
+               matcher {
+                   label = "sublabel"
+                   match = "="
+                   value = "subvalue"
+               }
+               contact_point = grafana_contact_point.a_third_contact_point.name
+               group_by = ["..."]
+           }
+       }
+   }
+   ```
+
+1. In the mute_timings field, link a mute timing to your notification policy.
+
+1. Run the command `terraform apply`.
+
+1. Go to the Grafana UI and check the details of your notification policy.
+
+1. Click **Test** to verify that the notification point is working correctly.
+
+### Add templates
+
+You can reuse the same templates across many contact points. In the example above, a shared template ie embedded using the statement `{{ template “Alert Instance Template” . }}`
+
+This fragment can then be managed separately in Terraform:
 
 ```HCL
-provider "grafana" {
-  url  = "http://grafana.example.com/"
-  auth = var.grafana_auth
-}
+resource "grafana_message_template" "my_alert_template" {
+    name = "Alert Instance Template"
 
-resource "grafana_mute_timing" "mute_all" {
-  name = "mute all"
-  disable_provenance = true
-  intervals {}
+    template = <<EOT
+{{ define "Alert Instance Template" }}
+Firing: {{ .Labels.alertname }}
+Silence: {{ .SilenceURL }}
+{{ end }}
+EOT
 }
 ```
 
-## Apply the Terraform configuration for provisioning
+### Add mute timings
 
-1. Initialize the working directory containing the Terraform configuration files created in the previous section.
+Mute timings provide the ability to mute alert notifications for defined time periods.
+
+To provision mute timings, refer to the [grafana_mute_timing schema](https://registry.terraform.io/providers/grafana/grafana/latest/docs/resources/mute_timing), and complete the following steps.
+
+1. Copy this code block into a `.tf` file on your local machine.
+
+   In this example, alert notifications are muted on weekends.
+
+   ```HCL
+   resource "grafana_mute_timing" "my_mute_timing" {
+       name = "My Mute Timing"
+
+       intervals {
+           times {
+           start = "04:56"
+           end = "14:17"
+           }
+           weekdays = ["saturday", "sunday", "tuesday:thursday"]
+           months = ["january:march", "12"]
+           years = ["2025:2027"]
+       }
+   }
+   ```
+
+1. Run the command `terraform apply`.
+1. Go to the Grafana UI and check the details of your mute timing.
+1. Reference your newly created mute timing in a notification policy using the `mute_timings` field.
+   This will apply your mute timing to some or all of your notifications.
+
+1. Click **Test** to verify that the mute timing is working correctly.
+
+### Enable editing resources in the Grafana UI
+
+By default, you cannot edit resources provisioned via Terraform in Grafana. This ensures that your alerting stack always stays in sync with your Terraform code.
+
+To make provisioned resources editable in the Grafana UI, enable the `disable_provenance` attribute on alerting resources.
+
+```terraform
+resource "grafana_contact_point" "my_contact_point" {
+  name = "My Contact Point"
+
+  disable_provenance = true
+}
+
+resource "grafana_message_template" "my_template" {
+  name     = "My Reusable Template"
+  template = "{{define \"My Reusable Template\" }}\n template content\n{{ end }}"
+
+  disable_provenance = true
+}
+...
+```
+
+## Provision Grafana resources with Terraform
+
+To import the Grafana alerting resources previously created with the Terraform CLI, complete the following steps.
+
+1. Initialize the working directory containing the Terraform configuration files.
 
    ```shell
    terraform init
@@ -381,9 +398,9 @@ resource "grafana_mute_timing" "mute_all" {
    terraform apply
    ```
 
-   Before it applies any changes, Terraform informs about the execution plan and asks for your approval.
+   Before applying any changes to Grafana, Terraform displays the execution plan and requests your approval.
 
-   ```bash
+   ```shell
     Plan: 4 to add, 0 to change, 0 to destroy.
 
     Do you want to perform these actions?
@@ -393,24 +410,38 @@ resource "grafana_mute_timing" "mute_all" {
     Enter a value:
    ```
 
-   Once you have confirmed the changes, Terraform creates the provisioned resources in Grafana!
+   Once you have confirmed to proceed with the changes, Terraform will create the provisioned resources in Grafana!
 
-   ```bash
+   ```shell
    Apply complete! Resources: 4 added, 0 changed, 0 destroyed.
    ```
 
-Then, you can visit Grafana to verify the creation of the distinct resources.
+You can now access Grafana to verify the creation of the distinct resources.
 
 ## More examples
 
-- [Grafana Terraform Provider documentation](https://registry.terraform.io/providers/grafana/grafana/latest/docs) for more examples and information on Terraform Alerting schemas.
-- [Demo example: provision alerting resources in Grafana OSS using Terraform and Docker Compose](https://github.com/grafana/provisioning-alerting-examples/tree/main/terraform).
-- [Tutorial: creating and managing a Grafana Cloud stack using Terraform][provision-cloud-with-terraform].
+For more examples on the concept of this guide:
+
+- Try the demo [provisioning alerting resources in Grafana OSS using Terraform and Docker Compose](https://github.com/grafana/provisioning-alerting-examples/tree/main/terraform).
+- Review all the available options and examples of the Terraform Alerting schemas in the [Grafana Terraform Provider documentation](https://registry.terraform.io/providers/grafana/grafana/latest/docs).
+- Review the [tutorial to manage a Grafana Cloud stack using Terraform][provision-cloud-with-terraform].
 
 {{% docs/reference %}}
 
 [alerting-rules]: "/docs/grafana/ -> /docs/grafana/<GRAFANA_VERSION>/alerting/alerting-rules"
 [alerting-rules]: "/docs/grafana-cloud/ -> /docs/grafana-cloud/alerting-and-irm/alerting/alerting-rules"
+
+[contact-points]: "/docs/grafana/ -> /docs/grafana/<GRAFANA_VERSION>/alerting/configure-notifications/manage-contact-points"
+[contact-points]: "/docs/grafana-cloud/ -> /docs/grafana-cloud/alerting-and-irm/alerting/configure-notifications/manage-contact-points"
+
+[mute-timings]: "/docs/grafana/ -> /docs/grafana/<GRAFANA_VERSION>/alerting/configure-notifications/mute-timings"
+[mute-timings]: "/docs/grafana-cloud/ -> /docs/grafana-cloud/alerting-and-irm/alerting/configure-notifications/mute-timings"
+
+[notification-policy]: "/docs/grafana/ -> /docs/grafana/<GRAFANA_VERSION>/alerting/configure-notifications/create-notification-policy"
+[notification-policy]: "/docs/grafana-cloud/ -> /docs/grafana-cloud/alerting-and-irm/alerting/configure-notifications/create-notification-policy"
+
+[notification-template]: "/docs/grafana/ -> /docs/grafana/<GRAFANA_VERSION>/alerting/configure-notifications/template-notifications"
+[notification-template]: "/docs/grafana-cloud/ -> /docs/grafana-cloud/alerting-and-irm/alerting/configure-notifications/template-notifications"
 
 [alerting_export]: "/docs/grafana/ -> /docs/grafana/<GRAFANA_VERSION>/alerting/set-up/provision-alerting-resources/export-alerting-resources"
 [alerting_export]: "/docs/grafana-cloud/ -> /docs/grafana-cloud/alerting-and-irm/alerting/set-up/provision-alerting-resources/export-alerting-resources"
