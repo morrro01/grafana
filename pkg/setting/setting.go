@@ -1767,7 +1767,7 @@ func (cfg *Cfg) readAlertingSettings(iniFile *ini.File) error {
 	enabled, err := alerting.Key("enabled").Bool()
 	if err == nil && enabled {
 		cfg.Logger.Error("Option [alerting].enabled cannot be true. Legacy alerting is no longer supported. Delete the option and use configuration '[unified_alerting].enabled' to enable Grafana Alerting and start from the scratch. Refer to documentation about migration to the new alerting (https://grafana.com/docs/grafana/latest/alerting/set-up/migrating-alerts)")
-		os.Exit(1)
+		return fmt.Errorf("invalid setting [alerting].enabled")
 	}
 	return nil
 }
