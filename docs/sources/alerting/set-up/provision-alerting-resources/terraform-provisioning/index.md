@@ -23,62 +23,58 @@ weight: 200
 
 Use Terraform’s Grafana Provider to manage your alerting resources and provision them into your Grafana system. Terraform provider support for Grafana Alerting makes it easy to create, manage, and maintain your entire Grafana Alerting stack as code.
 
-Refer to [Grafana Terraform Provider](https://registry.terraform.io/providers/grafana/grafana/latest/docs) documentation for more examples and information on Terraform Alerting schemas.
+This guide outlines the steps and references to provision alerting resources with Terraform. For a practical demo, you can clone this [example using Grafana OSS and Docker Compose](https://github.com/grafana/provisioning-alerting-examples/tree/main/terraform).
 
-Complete the following tasks to create and manage your alerting resources using Terraform.
+To create and manage your alerting resources using Terraform, you have to complete the following tasks.
 
-1. Create an API key for provisioning.
-1. Configure the Terraform provider.
-1. Define your alerting resources in Terraform. [Export alerting resources][alerting_export] in Terraform format, or implement the [Terraform Alerting schemas](https://registry.terraform.io/providers/grafana/grafana/latest/docs).
-
+1. Create an API key to configure the Terraform provider.
+1. Create your alerting resources in Terraform format by
+   - [exporting configured alerting resources][alerting_export]
+   - or writing the [Terraform Alerting schemas](https://registry.terraform.io/providers/grafana/grafana/latest/docs).
+     > By default, you cannot edit provisioned resources. Enable [`disable_provenance` in the Terraform resource](#edit-provisioned-resources-in-the-grafana-ui) to permit their modifications in the Grafana UI.
 1. Run `terraform apply` to provision your alerting resources.
 
-{{< admonition type="note" >}}
+Before you begin, you should have available a Grafana instance and [Terraform installed](https://www.terraform.io/downloads) on your machine.
 
-- By default, you cannot edit resources provisioned from Terraform from the UI. This ensures that your alerting stack always stays in sync with your code. To change the default behaviour, refer to [Edit provisioned resources in the Grafana UI](#edit-provisioned-resources-in-the-grafana-ui).
+## Create an API key and configure the Terraform provider
 
-- Before you begin, ensure you have the [Grafana Terraform Provider](https://registry.terraform.io/providers/grafana/grafana/) 1.27.0 or higher, and are using Grafana 9.1 or higher.
-
-{{< /admonition >}}
-
-## Create an API key for provisioning
-
-You can create a [service account token][service-accounts] to authenticate Terraform with Grafana. Most existing tooling using API keys should automatically work with the new Grafana Alerting support.
-
-There are also dedicated RBAC roles for alerting provisioning. This lets you easily authenticate as a service account with the minimum permissions needed to provision your Alerting infrastructure.
-
-To create an API key for provisioning, complete the following steps.
+You can create a [service account token][service-accounts] to authenticate Terraform with Grafana. To create an API key for provisioning alerting resources, complete the following steps.
 
 1. Create a new service account.
 1. Assign the role or permission to access the [Alerting provisioning API][alerting_http_provisioning].
 1. Create a new service account token.
 1. Name and save the token for use in Terraform.
 
-Alternatively, you can use basic authentication. To view all the supported authentication formats, see [here](https://registry.terraform.io/providers/grafana/grafana/latest/docs#authentication).
+You can now move to the working directory for your Terraform configurations, and create a file named `main.tf` like:
 
-## Configure the Terraform provider
-
-Grafana Alerting support is included as part of the [Grafana Terraform provider](https://registry.terraform.io/providers/grafana/grafana/latest/docs).
-
-The following is an example you can use to configure the Terraform provider.
-
-```HCL
+```main.tf
 terraform {
     required_providers {
         grafana = {
             source = "grafana/grafana"
-            version = ">= 1.28.2"
+            version = ">= 2.9.0"
         }
     }
 }
 
 provider "grafana" {
-    url = <YOUR_GRAFANA_URL>
-    auth = <YOUR_GRAFANA_API_KEY>
+    url = <grafana-url>
+    auth = <api-key>
 }
 ```
 
-## Import contact points and templates
+Replace the following values:
+
+- `<grafana-url>` with the URL of the Grafana instance.
+- `<api-key>` with the API token previously created.
+
+This Terraform configuration installs the [Grafana Terraform provider](https://registry.terraform.io/providers/grafana/grafana/latest/docs) and authenticates against your Grafana instance using an API token. For other authentication alternatives including basic authentication, refer to the [`auth` option documentation](https://registry.terraform.io/providers/grafana/grafana/latest/docs#authentication).
+
+For Grafana Cloud, refer to the [instructions to manage a Grafana Cloud stack with Terraform][provision-cloud-with-terraform]. For Role-based access control, refer to [Provisioning RBAC with Terraform](rbac-terraform-provisioning) and the [alerting provisioning roles (`fixed:alerting.provisioning.*`)][rbac-role-definitions].
+
+## Create Terraform configurations for alerting resources
+
+### Import contact points and templates
 
 Contact points connect an alerting stack to the outside world. They tell Grafana how to connect to your external systems and where to deliver notifications.
 
@@ -158,7 +154,7 @@ EOT
 }
 ```
 
-## Import notification policies and routing
+### Import notification policies and routing
 
 Notification policies tell Grafana how to route alert instances to your contact points. They connect firing alerts to your previously defined contact points using a system of labels and matchers.
 
@@ -216,7 +212,7 @@ Since the policy tree is a single resource, provisioning the `grafana_notificati
 
 1. Click **Test** to verify that the notification point is working correctly.
 
-## Import mute timings
+### Import mute timings
 
 Mute timings provide the ability to mute alert notifications for defined time periods.
 
@@ -249,7 +245,7 @@ To provision mute timings, refer to the [grafana_mute_timing schema](https://reg
 
 1. Click **Test** to verify that the mute timing is working correctly.
 
-## Import alert rules
+### Import alert rules
 
 [Alert rules][alerting-rules] enable you to alert against any Grafana data source. This can be a data source that you already have configured, or you can [define your data sources in Terraform](https://registry.terraform.io/providers/grafana/grafana/latest/docs/resources/data_source) alongside your alert rules.
 
@@ -352,9 +348,9 @@ When the alert fires, Grafana routes a notification through the policy you defin
 
 For example, if you chose Slack as a contact point, Grafana’s embedded [Alertmanager](https://github.com/prometheus/alertmanager) automatically posts a message to Slack.
 
-## Edit provisioned resources in the Grafana UI
+### Edit provisioned resources in the Grafana UI
 
-By default, you cannot edit resources provisioned via Terraform in Grafana. To enable editing these resources in the Grafana UI, use the `disable_provenance` attribute on alerting resources:
+By default, you cannot edit resources provisioned via Terraform in Grafana. This ensures that your alerting stack always stays in sync with your Terraform code. To enable editing these resources in the Grafana UI, enable the `disable_provenance` attribute on alerting resources:
 
 ```HCL
 provider "grafana" {
@@ -369,10 +365,47 @@ resource "grafana_mute_timing" "mute_all" {
 }
 ```
 
+## Apply the Terraform configuration for provisioning
+
+1. Initialize the working directory containing the Terraform configuration files created in the previous section.
+
+   ```shell
+   terraform init
+   ```
+
+   This command initializes the Terraform directory, installing the Grafana Terraform provider configured in the `main.tf` file.
+
+1. Apply the Terraform configuration files to provision the resources.
+
+   ```shell
+   terraform apply
+   ```
+
+   Before it applies any changes, Terraform informs about the execution plan and asks for your approval.
+
+   ```bash
+    Plan: 4 to add, 0 to change, 0 to destroy.
+
+    Do you want to perform these actions?
+    Terraform will perform the actions described above.
+    Only 'yes' will be accepted to approve.
+
+    Enter a value:
+   ```
+
+   Once you have confirmed the changes, Terraform creates the provisioned resources in Grafana!
+
+   ```bash
+   Apply complete! Resources: 4 added, 0 changed, 0 destroyed.
+   ```
+
+Then, you can visit Grafana to verify the creation of the distinct resources.
+
 ## More examples
 
-- [Grafana Terraform Provider documentation](https://registry.terraform.io/providers/grafana/grafana/latest/docs)
-- [Creating and managing a Grafana Cloud stack using Terraform](https://grafana.com/docs/grafana-cloud/developer-resources/infrastructure-as-code/terraform/terraform-cloud-stack)
+- [Grafana Terraform Provider documentation](https://registry.terraform.io/providers/grafana/grafana/latest/docs) for more examples and information on Terraform Alerting schemas.
+- [Demo example: provision alerting resources in Grafana OSS using Terraform and Docker Compose](https://github.com/grafana/provisioning-alerting-examples/tree/main/terraform).
+- [Tutorial: creating and managing a Grafana Cloud stack using Terraform][provision-cloud-with-terraform].
 
 {{% docs/reference %}}
 
@@ -389,4 +422,11 @@ resource "grafana_mute_timing" "mute_all" {
 
 [testdata]: "/docs/grafana/ -> /docs/grafana/<GRAFANA_VERSION>/datasources/testdata"
 [testdata]: "/docs/grafana-cloud/ -> /docs/grafana-cloud/connect-externally-hosted/data-sources/testdata"
+
+[provision-cloud-with-terraform]: "/docs/ -> /docs/grafana-cloud/developer-resources/infrastructure-as-code/terraform/terraform-cloud-stack"
+
+[rbac-role-definitions]: "/docs/ -> /docs/grafana/<GRAFANA_VERSION>/administration/roles-and-permissions/access-control/rbac-fixed-basic-role-definitions"
+
+[rbac-terraform-provisioning]: "/docs/ -> /docs/grafana/<GRAFANA_VERSION>/administration/roles-and-permissions/access-control/rbac-terraform-provisioning"
+
 {{% /docs/reference %}}
